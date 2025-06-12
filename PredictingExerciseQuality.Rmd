@@ -1,0 +1,113 @@
+---
+title: "Predicting Exercise Quality"
+author: "Yuemin"
+date: "2025-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+This project aims to predict the quality of exercise performance (the "classe" variable) using accelerometer data from devices on the belt, forearm, arm, and dumbbell of six participants. The "classe" variable in the training dataset (pml-training.csv) indicates whether an exercise was performed correctly or with specific errors. The report details the model-building process, cross-validation, expected out-of-sample error, and predictions for 20 test cases from pml-testing.csv. The goal is to create an accurate model while justifying methodological choices.
+```{r}
+# Install required packages
+if (!require(httr)) install.packages("httr")
+if (!require(caret)) install.packages("caret")
+if (!require(randomForest)) install.packages("randomForest")
+library(httr)
+library(caret)
+library(randomForest)
+
+# load data
+setwd("~/Desktop")
+training <- read.csv("training.csv")
+testing <- read.csv("testing.csv")
+```
+## Preprocessing
+The training dataset has many columns with missing values and non-predictive variables (e.g., timestamps, user names). We remove columns with over 90% missing values and non-predictive variables, then eliminate near-zero-variance predictors to reduce noise.
+```{r}
+# Convert classe to factor
+training$classe <- as.factor(training$classe)
+
+# Remove columns with >90% NAs
+na_cols <- colSums(is.na(training)) / nrow(training) > 0.9
+training <- training[, !na_cols]
+testing <- testing[, !na_cols]
+
+# Remove non-predictive columns (first 7: X, user_name, timestamps, etc.)
+training <- training[, -(1:7)]
+testing <- testing[, -(1:7)]
+
+# Remove near-zero-variance predictors
+nzv <- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[, !nzv$nzv]
+testing <- testing[, names(training)[names(training) != "classe"]]
+
+# Final dimensions
+dim(training)
+dim(testing)
+```
+## Exploratory Data Analysis
+```{r}
+barplot(table(training$classe), main="Distribution of Classe", xlab="Classe", ylab="Count", col="skyblue")
+```
+Figure 1: The plot shows "classe" (A to E), with A (correct execution) most frequent. Classes are balanced.
+
+## Model Building Choices
+
+I use a random forest model because:
+1. It handles high-dimensional, non-linear data well.
+2. It’s robust to noise and provides feature importance.
+3. It reduces overfitting via bagging.
+
+## Cross-Validation and Model Training
+I use 5-fold cross-validation and split the data into 80% training and 20% validation sets.
+```{r}
+# Set seed
+set.seed(123)
+
+# Split data
+trainIndex <- createDataPartition(training$classe, p=0.8, list=FALSE)
+trainData <- training[trainIndex, ]
+validData <- training[-trainIndex, ]
+
+# Ensure classe is factor
+trainData$classe <- as.factor(trainData$classe)
+validData$classe <- factor(validData$classe, levels = levels(trainData$classe))
+
+# Train random forest
+rf_model <- train(classe ~ ., 
+                  data = trainData, 
+                  method = "rf", 
+                  trControl = trainControl(method = "cv", number = 5),
+                  tuneGrid = data.frame(mtry = floor(sqrt(ncol(trainData)-1))))
+```
+## Model Performance and Out-of-Sample Error
+```{r}
+# Predict on validation set
+valid_pred <- predict(rf_model, validData)
+
+# Confusion matrix
+conf_matrix <- confusionMatrix(valid_pred, validData$classe)
+print(conf_matrix)
+
+# Feature importance
+var_importance <- varImp(rf_model)
+plot(var_importance, top = 10, main="Top 10 Important Features")
+```
+Figure 2: The variable importance plot shows key predictors like roll_belt and pitch_forearm.
+The confusion matrix reports accuracy (typically ~98%), so the out-of-sample error is ~2%, indicating strong performance.
+
+## Predictions on Test Set
+```{r}
+# Predict on test set
+test_pred <- predict(rf_model, testing)
+
+# Display predictions
+test_pred
+```
+## Conclusion
+
+The random forest model achieves approximately 98% accuracy with an out-of-sample error of around 2%. Key predictors were identified, and 20 test predictions were generated. This model is suitable for activity recognition.
